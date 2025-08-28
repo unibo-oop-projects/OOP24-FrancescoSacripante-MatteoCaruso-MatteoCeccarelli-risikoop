@@ -1,0 +1,137 @@
+name: CI/CD Process
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  branch:
+    runs-on: ubuntu-24.04
+    outputs:
+      is_default: ${{ steps.branch-name.outputs.is_default }}
+    steps:
+      - name: Get branch name
+        id: branch-name
+        uses: tj-actions/branch-names@v8
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+       version_tag: ${{ steps.version.outputs.version_tag }}
+    steps:
+      - name: Checkout
+        uses: DanySK/action-checkout@0.2.22
+      - uses: paulhatch/semantic-version@v5.4.0
+        id: version
+        with:
+          tag_prefix: ""
+          major_pattern: '/\w+(\(\w+\))?\!:\s.+/'
+          minor_pattern: '/feat(\(\w+\))?:\s.+/'
+          version_format: "${major}.${minor}.${patch}-dev${increment}"
+          namespace: 'grading'
+          bump_each_commit: true
+          search_commit_body: false
+      - run: '[ -n "${{ steps.version.outputs.version_tag }}" ]'
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-2025, macos-14, ubuntu-24.04 ]
+    runs-on: ${{ matrix.os }}
+    needs:
+      - version
+      - branch
+    steps:
+      - name: Support longpaths
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+      - name: Trick Renovate
+        id: versions
+        shell: bash
+        run: |
+          USES=$(cat <<TRICK_RENOVATE
+          - uses: git-quick-stats/git-quick-stats@e968ef62b9934c1ee5589c1482d61d7d11bc5b81
+          TRICK_RENOVATE
+          )
+          export USES="$USES"
+          ruby -e 'ENV["USES"].lines.map { |line| /^\s*-\s+uses:\s+[^\s]+\/([^\s]+)@(.*)\s*$/.match(line) }.each { |match| puts "#{match[1]}=#{match[2]}" }' >> $GITHUB_OUTPUT
+      - name: Checkout
+        uses: DanySK/action-checkout@0.2.22
+      - name: Compute the git stats
+        env:
+          TERM: xterm
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/git-quick-stats/git-quick-stats/${{ steps.versions.outputs.git-quick-stats }}/git-quick-stats) -T > git-stats.txt
+      - uses: DanySK/build-check-deploy-gradle-action@4.0.1
+        with:
+          build-command: ./gradlew blame
+          check-command: ./gradlew test blame || true
+          should-run-codecov: false
+          should-deploy: false
+          java-version: 17
+      - name: Release
+        if: contains('Linux', runner.os) && needs.branch.outputs.is_default
+        uses: ncipollo/release-action@v1.18.0
+        with:
+          tag: ${{ needs.version.outputs.version_tag }}
+          artifacts: "**/*blame*.md,git-stats.txt,scan-journal.log"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+  anti-plagiarism:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    needs:
+      - version
+      - branch
+    steps:
+      - name: Compute the version of the detector
+        id: version
+        shell: bash
+        run: |
+          USES=$(cat <<TRICK_RENOVATE
+          - uses: DanySK/code-plagiarism-detector@9.1.1
+          TRICK_RENOVATE
+          )
+          echo "Scripts update line: \"$USES\""
+          echo "Computed version: \"${USES#*@}\""
+          echo "version=${USES#*@}" >> $GITHUB_OUTPUT
+      - name: Download
+        run: curl -sL https://github.com/DanySK/code-plagiarism-detector/releases/download/${{ steps.version.outputs.version }}/code-plagiarism-detector-${{ steps.version.outputs.version }}-all.jar -o plagiarism.jar
+      - name: Run
+        env:
+          BB_USER: danysk
+          BB_TOKEN: ${{ secrets.BB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p plagiarism-report
+          java -jar plagiarism.jar --output-dir plagiarism-report \
+            submission \
+              --service github:${{ github.repository_owner }}/${{ github.event.repository.name }} \
+            corpus \
+              --service github:unibo-oop-projects,bitbucket:danysk/oop1,github:AlmasB/FXGLGames,github:DanySK/libgdx-examples,github:aricci303/game-as-a-lab,github:pslab-unibo/oop-game,github:k3vonk/UCD-Cluedo
+      - name: Release
+        if: needs.branch.outputs.is_default
+        uses: ncipollo/release-action@v1.18.0
+        with:
+          tag: ${{ needs.version.outputs.version_tag }}
+          artifacts: "plagiarism-report/*"
+          allowUpdates: true
+          replacesArtifacts: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+  success:
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+      - anti-plagiarism
+    if: >-
+      always() && (
+        contains(join(needs.*.result, ','), 'failure')
+        || !contains(join(needs.*.result, ','), 'cancelled')
+      )
+    steps:
+      - name: Verify that there were no failures
+        run: ${{ !contains(join(needs.*.result, ','), 'failure') }}
