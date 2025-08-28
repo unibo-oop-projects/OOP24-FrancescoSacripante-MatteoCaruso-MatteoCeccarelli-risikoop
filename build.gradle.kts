@@ -64,15 +64,6 @@ application {
     mainClass.set("it.unibo.risikoop.controller.RisikoApp")
 }
 
-tasks.withType(SpotBugsTask::class) {
-    reports.create("html") {
-        required.set(true)
-    }
-    reports.create("xml") {
-        required.set(false)
-    }
-}
-
 tasks.test {
     useJUnitPlatform()
     testLogging {
