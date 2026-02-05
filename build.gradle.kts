@@ -12,7 +12,7 @@ plugins {
      * In order to create it, launch the "shadowJar" task.
      * The runnable jar will be found in build/libs/projectname-all.jar
      */
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.gradleup.shadow") version "9.3.1"
     id("org.danilopianini.gradle-java-qa") version "1.96.0"
 
     id("org.danilopianini.unibo-oop-gradle-plugin") version "1.1.80"
@@ -52,10 +52,10 @@ dependencies {
     runtimeOnly("ch.qos.logback:logback-classic:1.5.17")
 
     // JUnit API and testing engine
-    val jUnitVersion = "5.11.4"
+    val jUnitVersion = "5.12.1"
     // when dependencies share the same version, grouping in a val helps to keep them in sync
-    testImplementation("org.junit.jupiter:junit-jupiter-api:$jUnitVersion")
-    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:$jUnitVersion")
+    testImplementation("org.junit.jupiter:junit-jupiter:$jUnitVersion")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
 
